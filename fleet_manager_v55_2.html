@@ -825,27 +825,127 @@
                 return { granTotal, lista, desgloseChoferes: Object.values(driverMap).sort((a,b) => b.total - a.total) }; 
             });
 
-            const resumenChoferes = computed(() => { 
-                const { desde, hasta } = filtrosChofer.value; 
-                if (!desde || !hasta) return { lista: [], totalHoras: 0 };
-                const dStart = new Date(desde); const dEnd = new Date(hasta); let totalDiff = dEnd - dStart; if (totalDiff <= 0) totalDiff = 1;
-                const stats = {};
-                choferes.value.forEach(c => { stats[c.id] = { id: c.id, nombre: getFullDriverName(c), tipoNombre: getTipoChoferNombre(c.tipoId), viajes: 0, horas: 0, horasCasa: 0, revenue: 0, timelineBlocks: [], rawTrips: [] }; });
-                viajes.value.forEach(v => {
-                    if (v.fechaSalida >= desde && v.fechaSalida <= hasta) {
-                        const calcMs = (fs, hs, fl, hl) => { if(!fs || !hs || !fl || !hl) return 0; return (new Date(`${fl}T${hl}`) - new Date(`${fs}T${hs}`)); };
-                        let ms1 = 0, ms2 = 0, msC = 0; const tripMs = calcMs(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada);
-                        if (v.choferId) ms1 = tripMs; if (v.chofer2Id) ms2 = tripMs; if (v.cargadorId) { msC = calcMs(v.fechaSalidaCargador || v.fechaSalida, v.horaSalidaCargador || v.horaSalida, v.fechaLlegadaCargador || v.fechaLlegada, v.horaLlegadaCargador || v.horaLlegada); }
-                        const totalWorkMs = ms1 + ms2 + msC; const totalRevenue = (v.precioIda || 0) + (v.precioVuelta || 0);
-                        const processTimeBlock = (fSalida, hSalida, fLlegada, hLlegada, type, tooltip, msDuration) => { if (msDuration <= 0) return null; const durationHours = msDuration / 3600000; const share = totalWorkMs > 0 ? (msDuration / totalWorkMs) * totalRevenue : 0; const start = new Date(`${fSalida}T${hSalida}`); const end = new Date(`${fLlegada}T${hLlegada}`); return { duration: durationHours, revenueShare: share, start, end }; };
-                        if (v.choferId && stats[v.choferId]) { const res = processTimeBlock(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada, 'active', '', ms1); if(res) { stats[v.choferId].viajes++; stats[v.choferId].horas += res.duration; stats[v.choferId].revenue += res.revenueShare; stats[v.choferId].rawTrips.push({start: res.start, end: res.end}); } }
-                        if (v.chofer2Id && stats[v.chofer2Id]) { const res = processTimeBlock(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada, 'active2', '', ms2); if(res) { stats[v.chofer2Id].viajes++; stats[v.chofer2Id].horas += res.duration; stats[v.chofer2Id].revenue += res.revenueShare; stats[v.chofer2Id].rawTrips.push({start: res.start, end: res.end}); } }
-                        if (v.cargadorId && stats[v.cargadorId]) { const fs = v.fechaSalidaCargador || v.fechaSalida; const hs = v.horaSalidaCargador || v.horaSalida; const fl = v.fechaLlegadaCargador || v.fechaLlegada; const hl = v.horaLlegadaCargador || v.horaLlegada; const res = processTimeBlock(fs, hs, fl, hl, 'charger', '', msC); if(res) { stats[v.cargadorId].viajes++; stats[v.cargadorId].horas += res.duration; stats[v.cargadorId].revenue += res.revenueShare; stats[v.cargadorId].rawTrips.push({start: res.start, end: res.end}); } }
-                    }
-                });
-                Object.values(stats).forEach(chofer => { if (chofer.rawTrips.length > 1) { chofer.rawTrips.sort((a, b) => a.start - b.start); let totalHome = 0; for (let i = 0; i < chofer.rawTrips.length - 1; i++) { const diff = (chofer.rawTrips[i+1].start - chofer.rawTrips[i].end) / 3600000; if (diff > 0) totalHome += diff; } chofer.horasCasa = totalHome; } });
-                return { lista: Object.values(stats).sort((a, b) => b.revenue - a.revenue), totalHoras: Object.values(stats).reduce((a,s)=>a+s.horas,0) }; 
-            });
+            const resumenChoferes = computed(() => {
+    const { desde, hasta } = filtrosChofer.value;
+    if (!desde || !hasta) return { lista: [], totalHoras: 0 };
+
+    const stats = {};
+    // Inicializar estadísticas para todos los chóferes
+    choferes.value.forEach(c => {
+        stats[c.id] = { 
+            id: c.id, 
+            nombre: getFullDriverName(c), 
+            tipoNombre: getTipoChoferNombre(c.tipoId), 
+            viajes: 0, 
+            horas: 0, 
+            horasCasa: 0, 
+            revenue: 0, 
+            rawTrips: [] 
+        };
+    });
+
+    viajes.value.forEach(v => {
+        if (v.fechaSalida >= desde && v.fechaSalida <= hasta) {
+            const calcMs = (fs, hs, fl, hl) => { 
+                if (!fs || !hs || !fl || !hl) return 0; 
+                return (new Date(`${fl}T${hl}`) - new Date(`${fs}T${hs}`)); 
+            };
+
+            let ms1 = 0, ms2 = 0, msC = 0;
+            
+            // Tiempo del viaje principal
+            const tripMs = calcMs(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada);
+
+            if (v.choferId) ms1 = tripMs;
+            if (v.chofer2Id) ms2 = tripMs;
+
+            // Lógica corregida para el Cargador
+            if (v.cargadorId) {
+                // Usar fechas de cargador si existen, sino fallback a fechas del viaje
+                const fs = v.fechaSalidaCargador || v.fechaSalida;
+                const hs = v.horaSalidaCargador || v.horaSalida;
+                const fl = v.fechaLlegadaCargador || v.fechaLlegada;
+                const hl = v.horaLlegadaCargador || v.horaLlegada;
+                
+                msC = calcMs(fs, hs, fl, hl);
+                
+                // PROTECCIÓN: Si el tiempo calculado es negativo o absurdo (más de 24h que el viaje), usar tiempo de viaje
+                if (msC <= 0 || msC > (tripMs + 86400000)) { 
+                    msC = tripMs; 
+                }
+            }
+
+            const totalWorkMs = ms1 + ms2 + msC;
+            const totalRevenue = (v.precioIda || 0) + (v.precioVuelta || 0);
+
+            const processTimeBlock = (fSalida, hSalida, fLlegada, hLlegada, msDuration) => {
+                if (msDuration <= 0) return null;
+                const durationHours = msDuration / 3600000;
+                // Reparto proporcional del dinero basado en el tiempo trabajado
+                const share = totalWorkMs > 0 ? (msDuration / totalWorkMs) * totalRevenue : 0;
+                const start = new Date(`${fSalida}T${hSalida}`);
+                const end = new Date(`${fLlegada}T${hLlegada}`);
+                return { duration: durationHours, revenueShare: share, start, end };
+            };
+
+            // Asignar datos a Conductor 1
+            if (v.choferId && stats[v.choferId]) {
+                const res = processTimeBlock(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada, ms1);
+                if (res) {
+                    stats[v.choferId].viajes++;
+                    stats[v.choferId].horas += res.duration;
+                    stats[v.choferId].revenue += res.revenueShare;
+                    stats[v.choferId].rawTrips.push({ start: res.start, end: res.end });
+                }
+            }
+
+            // Asignar datos a Conductor 2
+            if (v.chofer2Id && stats[v.chofer2Id]) {
+                const res = processTimeBlock(v.fechaSalida, v.horaSalida, v.fechaLlegada, v.horaLlegada, ms2);
+                if (res) {
+                    stats[v.chofer2Id].viajes++;
+                    stats[v.chofer2Id].horas += res.duration;
+                    stats[v.chofer2Id].revenue += res.revenueShare;
+                    stats[v.chofer2Id].rawTrips.push({ start: res.start, end: res.end });
+                }
+            }
+
+            // Asignar datos a Cargador
+            if (v.cargadorId && stats[v.cargadorId]) {
+                const fs = v.fechaSalidaCargador || v.fechaSalida;
+                const hs = v.horaSalidaCargador || v.horaSalida;
+                const fl = v.fechaLlegadaCargador || v.fechaLlegada;
+                const hl = v.horaLlegadaCargador || v.horaLlegada;
+                
+                const res = processTimeBlock(fs, hs, fl, hl, msC);
+                if (res) {
+                    stats[v.cargadorId].viajes++;
+                    stats[v.cargadorId].horas += res.duration;
+                    stats[v.cargadorId].revenue += res.revenueShare;
+                    stats[v.cargadorId].rawTrips.push({ start: res.start, end: res.end });
+                }
+            }
+        }
+    });
+
+    // Calcular horas en casa
+    Object.values(stats).forEach(chofer => {
+        if (chofer.rawTrips.length > 1) {
+            chofer.rawTrips.sort((a, b) => a.start - b.start);
+            let totalHome = 0;
+            for (let i = 0; i < chofer.rawTrips.length - 1; i++) {
+                const diff = (chofer.rawTrips[i + 1].start - chofer.rawTrips[i].end) / 3600000;
+                if (diff > 0) totalHome += diff;
+            }
+            chofer.horasCasa = totalHome;
+        }
+    });
+
+    return { 
+        lista: Object.values(stats).sort((a, b) => b.revenue - a.revenue), 
+        totalHoras: Object.values(stats).reduce((a, s) => a + s.horas, 0) 
+    };
+});
 
             const analisisFlota = computed(() => {
                 const now = new Date();
@@ -869,11 +969,93 @@
 
             const abrirModalViaje = (f) => { modoEdicion.value = false; idViajeEditando.value = null; const d = f || new Date().toISOString().split('T')[0]; nuevoViaje.value = { fechaSalida: d, horaSalida: '08:00', fechaLlegada: d, horaLlegada: '18:00', rutaId: '', rutaNombreManual: '', choferId: '', chofer2Id: null, tractoraId: '', remolqueId: '', precioIda: 0, precioVuelta: 0, color: '#bae6fd', cargadorId: null, fechaSalidaCargador: d, horaSalidaCargador: '08:00', fechaLlegadaCargador: d, horaLlegadaCargador: '18:00' }; mostrarModalViaje.value = true; };
             
-            const editarViaje = (v) => { modoEdicion.value = true; idViajeEditando.value = v.id; const r=rutas.value.find(x=>x.nombre===v.rutaNombre); const c1=choferes.value.find(x=>x.nombre===v.choferNombre); const c2=v.chofer2Nombre?choferes.value.find(x=>x.nombre===v.chofer2Nombre):null; const cargador=v.cargadorNombre?choferes.value.find(x=>x.nombre===v.cargadorNombre):null; const t=tractoras.value.find(x=>x.matricula===v.tractoraPlaca); const rem=remolques.value.find(x=>x.matricula===v.remolquePlaca); nuevoViaje.value = { ...v, rutaId: r?.id, rutaNombreManual: v.rutaNombreManual || v.rutaNombre, choferId: c1?.id, chofer2Id: c2?.id||null, tractoraId: t?.id, remolqueId: rem?.id, color: v.color||'#bae6fd', cargadorId: v.cargadorId || cargador?.id || null, fechaSalidaCargador: v.fechaSalidaCargador || v.fechaSalida, horaSalidaCargador: v.horaSalidaCargador || v.horaSalida, fechaLlegadaCargador: v.fechaLlegadaCargador || v.fechaLlegada, horaLlegadaCargador: v.horaLlegadaCargador || v.horaLlegada }; mostrarModalViaje.value = true; };
+            const editarViaje = (v) => {
+    modoEdicion.value = true;
+    idViajeEditando.value = v.id;
+    
+    // Buscar objetos completos basados en los datos del viaje
+    const r = rutas.value.find(x => x.nombre === v.rutaNombre);
+    const c1 = choferes.value.find(x => x.nombre === v.choferNombre);
+    const c2 = v.chofer2Nombre ? choferes.value.find(x => x.nombre === v.chofer2Nombre) : null;
+    
+    // Lógica mejorada para encontrar al cargador por ID o por Nombre
+    let cargador = null;
+    if (v.cargadorId) {
+        cargador = choferes.value.find(x => x.id === v.cargadorId);
+    } else if (v.cargadorNombre) {
+        cargador = choferes.value.find(x => x.nombre === v.cargadorNombre);
+    }
+    
+    const t = tractoras.value.find(x => x.matricula === v.tractoraPlaca);
+    const rem = remolques.value.find(x => x.matricula === v.remolquePlaca);
+
+    // Inicializar el objeto con valores seguros
+    nuevoViaje.value = {
+        ...v,
+        rutaId: r?.id || '',
+        rutaNombreManual: v.rutaNombreManual || v.rutaNombre,
+        choferId: c1?.id || '',
+        chofer2Id: c2?.id || null,
+        tractoraId: t?.id || '',
+        remolqueId: rem?.id || '',
+        color: v.color || '#bae6fd',
+        // CORRECCIÓN AQUÍ: Asegurar que cargadorId sea el ID correcto o null explícito
+        cargadorId: cargador ? cargador.id : null,
+        // CORRECCIÓN AQUÍ: Si no hay fechas de cargador guardadas, usar las del viaje por defecto
+        fechaSalidaCargador: v.fechaSalidaCargador || v.fechaSalida,
+        horaSalidaCargador: v.horaSalidaCargador || v.horaSalida,
+        fechaLlegadaCargador: v.fechaLlegadaCargador || v.fechaLlegada,
+        horaLlegadaCargador: v.horaLlegadaCargador || v.horaLlegada,
+        precioIda: v.precioIda || 0,
+        precioVuelta: v.precioVuelta || 0
+    };
+    mostrarModalViaje.value = true;
+};
             
             const alSeleccionarRuta = () => { const r = rutas.value.find(x => x.id === nuevoViaje.value.rutaId); if (r) nuevoViaje.value.rutaNombreManual = r.nombre; };
 
-            const guardarViaje = () => { const r=rutas.value.find(x=>x.id===nuevoViaje.value.rutaId); const c1=choferes.value.find(x=>x.id===nuevoViaje.value.choferId); const c2=nuevoViaje.value.chofer2Id?choferes.value.find(x=>x.id===nuevoViaje.value.chofer2Id):null; const t=tractoras.value.find(x=>x.id===nuevoViaje.value.tractoraId); const rem=remolques.value.find(x=>x.id===nuevoViaje.value.remolqueId); const cargador = nuevoViaje.value.cargadorId ? choferes.value.find(x=>x.id===nuevoViaje.value.cargadorId) : null; if(!r||!c1||!t||!rem) return alert("Faltan datos de ruta, chófer o vehículos."); const vObj = { ...nuevoViaje.value, rutaNombre:r.nombre, rutaNombreManual: nuevoViaje.value.rutaNombreManual || r.nombre, choferNombre:c1.nombre, chofer2Nombre:c2?c2.nombre:null, tractoraPlaca:t.matricula, remolquePlaca:rem.matricula, cargadorNombre: cargador ? cargador.nombre : null }; if(modoEdicion.value) { const idx=viajes.value.findIndex(v=>v.id===idViajeEditando.value); viajes.value[idx]={...viajes.value[idx], ...vObj}; } else { viajes.value.push({id:Date.now(), ...vObj}); } mostrarModalViaje.value = false; };
+            const guardarViaje = () => {
+    // Validaciones básicas
+    const r = rutas.value.find(x => x.id === nuevoViaje.value.rutaId);
+    const c1 = choferes.value.find(x => x.id === nuevoViaje.value.choferId);
+    const t = tractoras.value.find(x => x.id === nuevoViaje.value.tractoraId);
+    const rem = remolques.value.find(x => x.id === nuevoViaje.value.remolqueId);
+
+    if (!r || !c1 || !t || !rem) return alert("Faltan datos de ruta, chófer o vehículos.");
+
+    // Gestionar Chofer 2 y Cargador
+    const c2 = nuevoViaje.value.chofer2Id ? choferes.value.find(x => x.id === nuevoViaje.value.chofer2Id) : null;
+    const cargador = nuevoViaje.value.cargadorId ? choferes.value.find(x => x.id === nuevoViaje.value.cargadorId) : null;
+
+    // Construir el objeto del viaje
+    const vObj = {
+        ...nuevoViaje.value,
+        rutaNombre: r.nombre,
+        rutaNombreManual: nuevoViaje.value.rutaNombreManual || r.nombre,
+        choferNombre: c1.nombre,
+        chofer2Nombre: c2 ? c2.nombre : null,
+        tractoraPlaca: t.matricula,
+        remolquePlaca: rem.matricula,
+        // CORRECCIÓN AQUÍ: Guardar explícitamente los datos del cargador o null si no existe
+        cargadorId: cargador ? cargador.id : null,
+        cargadorNombre: cargador ? cargador.nombre : null,
+        // Asegurar que las fechas del cargador se guarden (se toman del v-model de nuevoViaje)
+        fechaSalidaCargador: nuevoViaje.value.fechaSalidaCargador,
+        horaSalidaCargador: nuevoViaje.value.horaSalidaCargador,
+        fechaLlegadaCargador: nuevoViaje.value.fechaLlegadaCargador,
+        horaLlegadaCargador: nuevoViaje.value.horaLlegadaCargador
+    };
+
+    if (modoEdicion.value) {
+        const idx = viajes.value.findIndex(v => v.id === idViajeEditando.value);
+        if (idx !== -1) {
+            viajes.value[idx] = { ...viajes.value[idx], ...vObj };
+        }
+    } else {
+        viajes.value.push({ id: Date.now(), ...vObj });
+    }
+    mostrarModalViaje.value = false;
+};
             
             const eliminarViajeActual = () => { if(confirm("¿Eliminar?")) { viajes.value = viajes.value.filter(v=>v.id!==idViajeEditando.value); mostrarModalViaje.value=false; } };
             const abrirAdmin = (t) => { modalAdmin.value = t; idEdicionAdmin.value = null; formAdmin.value = { nombre: '', apellidos: '', datoExtra: '', origen: '', destino: '', km: '', itv: '', atp: '', tacografo: '', dni: '', telefono: '', tipoId: null }; };
